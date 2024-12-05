@@ -1,13 +1,13 @@
-#Color schemes
-
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import os
+from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+import colorcet as cc  # For interactive color palettes
 
-
-# Function to list available shapefiles
+# Function to list shapefiles
 def list_shapefiles(directory):
-
     all_files = os.listdir(directory)
     shapefiles = [file for file in all_files if file.endswith((".shp", ".SHP"))]
     return shapefiles
@@ -26,8 +26,21 @@ def load_shapefile(file_name, directory):
 
 
 # Function to choose a colormap
-def choose_colormap(scheme_type, palette=None):
-
+def choose_colormap(scheme_type, palette=None, custom_colors=None):
+    """
+    Choose a colormap based on scheme type, palette, or custom color stops.
+    """
+    if scheme_type == "dual color":
+        if not custom_colors or len(custom_colors) != 2:
+            raise ValueError("Dual gradient requires exactly two colors (start and end).")
+        return LinearSegmentedColormap.from_list("dual color", custom_colors)
+    if custom_colors:
+        return LinearSegmentedColormap.from_list("custom", custom_colors)
+    if scheme_type == "interactive":
+        print("Available palettes from Colorcet:")
+        print(cc.palette.keys())
+        palette = input("Enter a palette name: ")
+        return cc.palette.get(palette, "Blues")
     if scheme_type == "sequential":
         return palette if palette else "Blues"
     elif scheme_type == "divergent":
@@ -35,26 +48,51 @@ def choose_colormap(scheme_type, palette=None):
     elif scheme_type == "qualitative":
         return palette if palette else "Set3"
     else:
-        raise ValueError("Invalid scheme type. Choose 'sequential', 'divergent', or 'qualitative'.")
+        raise ValueError("Invalid scheme type. Choose 'sequential', 'divergent', 'qualitative', or 'dual color'.")
 
 
-# Function to plot the GeoDataFrame
-def plot_geodataframe(gdf, column, scheme_type="sequential", palette=None):
+# Function to plot GeoDataFrame with enhancements
+def plot_geodataframe(
+        gdf, column, scheme_type="sequential", palette=None, legend_bins=None, custom_colors=None, vmin=None, vmax=None
+):
+    """
+    Plot GeoDataFrame with various customizable options:
+    - Dual color gradient
+    - Gradient control
+    - Customizable colorbar
+    """
+    cmap = choose_colormap(scheme_type, palette, custom_colors)
 
-    cmap = choose_colormap(scheme_type, palette)  # Get the colormap based on the scheme type and palette
+    # Normalize the data for the colorbar
+    norm = Normalize(vmin=vmin if vmin else gdf[column].min(), vmax=vmax if vmax else gdf[column].max())
 
-    # Create the plot
     fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot the GeoDataFrame without the automatic legend
     gdf.plot(
         ax=ax,
-        column=column,  # Color by the selected column
-        cmap=cmap,  # Use the selected colormap
-        edgecolor="black",  # Black boundaries
-        legend=True  # Display legend
+        column=column,
+        cmap=cmap,
+        edgecolor="black",
+        legend=False,  # Suppress automatic legend
+        norm=norm
     )
-    ax.set_title(f"Map USA {column} ({scheme_type.capitalize()})", fontsize=12)
-    plt.show()
+    ax.set_title(f"Map: {column} ({scheme_type.replace('_', ' ').capitalize()})", fontsize=12)
 
+    # Create a ScalarMappable for the colorbar
+    sm = ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])  # Required for ScalarMappable
+    cbar = fig.colorbar(sm, ax=ax, orientation="vertical")
+    cbar.set_label(column, fontsize=12)
+
+    # Save option
+    save_option = input("Do you want to save the map? (yes/no): ").lower()
+    if save_option == "yes":
+        output_file = input("Enter the filename to save (e.g., map.png): ")
+        fig.savefig(output_file, dpi=300)
+        print(f"Map saved as {output_file}.")
+
+    plt.show()
 
 # Main script
 directory = input("Enter the directory where your shapefiles are located: ")
@@ -84,7 +122,7 @@ gdf = load_shapefile(selected_shapefile, directory)
 
 if gdf is not None:
     print("Columns available in the shapefile:")
-    print(gdf.columns)  # Display available columns to the user
+    print(gdf.columns)
 
     # Ask the user for input
     column = input("Enter the column name to visualize: ")
@@ -93,14 +131,38 @@ if gdf is not None:
     print("\nChoose a colormap type from the following options:")
     print("Sequential : for data that progresses (e.g., population density) _ https://colorbrewer2.org/#type=sequential&scheme=Blues&n=3")
     print("Divergent : for data with a central point (e.g., temperatures) _ https://colorbrewer2.org/#type=diverging&scheme=RdBu&n=3")
-    print("Qualitative : for categorical data (e.g., land use types) _ https://colorbrewer2.org/#type=qualitative&scheme=Set1&n=3\n")
+    print("Qualitative : for categorical data (e.g., land use types) _ https://colorbrewer2.org/#type=qualitative&scheme=Set1&n=3")
+    print("Dual Color : for a custom gradient between two colors (e.g., red to yellow)")
+    print("Interactive : for exploratory visualization\n")
 
-    scheme_type = input("Choose a colormap type (sequential, divergent, qualitative): ").lower()
-    palette = input(f"Choose a palette for {scheme_type} (or press Enter for default): ")
+    scheme_type = input("Choose a colormap type (sequential, divergent, qualitative, interactive, dual color): ").lower()
+    palette = None
+    custom_colors = None
+
+    if scheme_type == "dual color":
+        print("Dual Color: Provide two colors for the gradient.")
+        start_color = input("Enter the start color (e.g., #d7191c): ")
+        end_color = input("Enter the end color (e.g., #fdae61): ")
+        custom_colors = [start_color, end_color]
+
+    elif input("Do you want to use custom color stops? (yes/no): ").lower() == "yes":
+        custom_colors = input("Enter custom colors as a comma-separated list (e.g., #d7191c,#fdae61,#2b83ba): ").split(",")
+
+    legend_bins = input("Enter number of bins for the legend (or press Enter for default): ")
+    legend_bins = int(legend_bins) if legend_bins else None
+
+    vmin = input("Enter minimum value for the gradient (or press Enter for default): ")
+    vmin = float(vmin) if vmin else None
+
+    vmax = input("Enter maximum value for the gradient (or press Enter for default): ")
+    vmax = float(vmax) if vmax else None
 
     # Check if the column exists
     if column in gdf.columns:
-        plot_geodataframe(gdf, column, scheme_type, palette)
+        plot_geodataframe(
+            gdf, column, scheme_type, palette, legend_bins, custom_colors=custom_colors,
+            vmin=vmin, vmax=vmax
+        )
     else:
         print(f"Error: Column '{column}' does not exist in the shapefile.")
 else:
